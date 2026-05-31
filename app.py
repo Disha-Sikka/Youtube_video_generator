@@ -2,19 +2,13 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
+from gtts import gTTS  # <-- NEW IMPORT
 
-# 1. Load the environment variables from the .env file
+# Load environment variables
 load_dotenv()
-
-# 2. Initialize the Gemini Client
-# It will now automatically grab the GEMINI_API_KEY loaded by dotenv
 client = genai.Client()
 
 def generate_rhyme_and_prompts(topic: str):
-    """
-    Sends a structured prompt to Gemini to return a rhyme and 
-    corresponding image generation descriptions.
-    """
     prompt = f"""
     You are an expert children's content creator. 
     Create a short, fun, 4-line rhyming verse for toddlers about the topic: "{topic}".
@@ -36,14 +30,20 @@ def generate_rhyme_and_prompts(topic: str):
     )
     return response.text
 
+# --- NEW AUDIO FUNCTION ---
+def generate_audio(text: str, filename="rhyme_audio.mp3"):
+    """Converts text to speech and saves it as an MP3."""
+    # We use lang='en' for English. 
+    tts = gTTS(text=text, lang='en', slow=False)
+    tts.save(filename)
+    return filename
+
 # --- Streamlit UI Setup ---
 st.title("🤖 Kids Rhyme Video Engine")
-st.subheader("Step 1: Content Generation & Verification")
+st.subheader("Step 1 & 2: Content Generation & Voiceover")
 
-# Input from user
-topic_input = st.text_input("Enter a topic for the rhyme (e.g., 'A happy little sea turtle'):")
+topic_input = st.text_input("Enter a topic for the rhyme:")
 
-# Initialize session state to store generated content across button clicks
 if "generated_text" not in st.session_state:
     st.session_state.generated_text = None
 
@@ -51,24 +51,37 @@ if st.button("Generate Script & Prompts"):
     if topic_input:
         with st.spinner("Generating creative ideas..."):
             try:
-                result = generate_rhyme_and_prompts(topic_input)
-                st.session_state.generated_text = result
+                st.session_state.generated_text = generate_rhyme_and_prompts(topic_input)
             except Exception as e:
                 st.error(f"Error calling API: {e}")
     else:
         st.warning("Please enter a topic first!")
 
-# Display results if they exist in session state
 if st.session_state.generated_text:
     st.markdown("### 📋 Generated Output")
     st.text_area("Raw AI Output (Review carefully)", st.session_state.generated_text, height=250)
     
-    # Action buttons for the next stage of the pipeline
+    full_text = st.session_state.generated_text
+    
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("👍 Approve & Proceed to Video/Audio Generation", type="primary"):
-            st.success("Moving to the next stage! (We will hook up the asset generation here next).")
-            
+        if st.button("👍 Approve & Generate Voiceover", type="primary"):
+            with st.spinner("Recording voiceover..."):
+                # 1. Parse out just the rhyme (we don't want the robot reading the image prompt!)
+                try:
+                    # Split the text at "IMAGE_PROMPT:" and take the first half, then remove "RHYME:"
+                    rhyme_only = full_text.split("IMAGE_PROMPT:")[0].replace("RHYME:", "").strip()
+                except:
+                    # Fallback just in case Gemini changes the formatting
+                    rhyme_only = full_text
+                
+                # 2. Generate and save the audio
+                audio_file_path = generate_audio(rhyme_only)
+                
+                # 3. Display audio player in the UI
+                st.success("Audio generated successfully! 🎧")
+                st.audio(audio_file_path, format="audio/mp3")
+                
     with col2:
         if st.button("❌ Reject / Regenerate"):
             st.session_state.generated_text = None
