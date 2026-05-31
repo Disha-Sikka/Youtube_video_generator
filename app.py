@@ -2,26 +2,34 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
-from gtts import gTTS  # <-- NEW IMPORT
+from elevenlabs.client import ElevenLabs # <-- NEW IMPORT
 
 # Load environment variables
 load_dotenv()
 client = genai.Client()
 
 def generate_rhyme_and_prompts(topic: str):
+    """
+    Sends a highly engineered prompt to Gemini to return a Cocomelon-style 
+    song and a 3D animation style image description.
+    """
     prompt = f"""
-    You are an expert children's content creator. 
-    Create a short, fun, 4-line rhyming verse for toddlers about the topic: "{topic}".
+    You are a master songwriter for a hit toddler channel like Cocomelon.
+    Write a highly repetitive, bouncy, and extremely catchy nursery rhyme song about: "{topic}".
     
-    Also, provide a vivid description for an image generator (like Stable Diffusion) 
-    to create a cute, bright background/character illustration matching this rhyme.
+    The song MUST have:
+    1. A repeating, catchy hook or chorus.
+    2. Fun sound words and actions (e.g., "Yay! Yay!", "Clap your hands!", "Chomp chomp!").
+    3. A bouncy rhythm that naturally fits a happy nursery rhyme melody.
     
-    Format your response exactly like this:
+    Keep it to 2 or 3 short, energetic stanzas.
+    
+    Format your response EXACTLY like this:
     RHYME:
-    [Insert 4-line rhyme here]
+    [Insert the bouncy song lyrics here]
     
     IMAGE_PROMPT:
-    [Insert image prompt here]
+    [Describe a bright, colorful, 3D animated scene (like Cocomelon or Pixar style) featuring cute, big-eyed toddlers and friendly animals matching the song.]
     """
     
     response = client.models.generate_content(
@@ -31,11 +39,28 @@ def generate_rhyme_and_prompts(topic: str):
     return response.text
 
 # --- NEW AUDIO FUNCTION ---
+eleven_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+
 def generate_audio(text: str, filename="rhyme_audio.mp3"):
-    """Converts text to speech and saves it as an MP3."""
-    # We use lang='en' for English. 
-    tts = gTTS(text=text, lang='en', slow=False)
-    tts.save(filename)
+    """Converts text to high-quality cheerful speech using the new ElevenLabs SDK."""
+    
+    # Use the new .text_to_speech.convert() syntax
+    audio_generator = eleven_client.text_to_speech.convert(
+        text=text,
+        voice_id="JBFqnCBsd6RMkjVDRZzb", # This is a default voice ID, you can change it later
+        model_id="eleven_multilingual_v2",
+        output_format="mp3_44100_128"
+    )
+    
+    # Save the audio generator to a file
+    with open(filename, "wb") as f:
+        # Check if the output is a generator (streaming) or bytes
+        if hasattr(audio_generator, '__iter__') and not isinstance(audio_generator, bytes):
+             for chunk in audio_generator:
+                 f.write(chunk)
+        else:
+             f.write(audio_generator)
+            
     return filename
 
 # --- Streamlit UI Setup ---
