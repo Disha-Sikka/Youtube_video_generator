@@ -2,12 +2,15 @@
 import os
 import io
 import requests
+import asyncio
+import edge_tts
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
 from PIL import Image
 from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
+from huggingface_hub import InferenceClient
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
@@ -40,6 +43,46 @@ def generate_rhyme_and_prompts(topic: str):
     )
     return response.text
 
+async def async_generate_audio(text: str, filename: str, voice: str):
+    """The asynchronous core function for Microsoft Edge TTS."""
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(filename)
+
+def generate_voiceover(text: str, filename="raw_voice.mp3"):
+    """Generates voiceover using Edge TTS completely for free."""
+    # "en-US-AriaNeural" is bright, clear, and excellent for storytelling
+    voice = "en-US-AriaNeural" 
+    
+    asyncio.run(async_generate_audio(text, filename, voice))
+    return filename
+
+# --- 3. AUDIO MIXING (PYDUB) ---
+def mix_audio(voice_file: str, bgm_file="bg_music.mp3", output_file="final_audio.mp3"):
+    """Overlays the voiceover onto a looping background music track."""
+    from pydub import AudioSegment
+    
+    if not os.path.exists(bgm_file):
+        st.warning(f"Background music '{bgm_file}' not found. Skipping mixing.")
+        return voice_file
+        
+    voice = AudioSegment.from_mp3(voice_file)
+    bgm = AudioSegment.from_mp3(bgm_file)
+    
+    # Lower the background music volume by 15 decibels so the voice is clear
+    bgm = bgm - 15
+    
+    # Loop the background music until it's as long as the voiceover
+    while len(bgm) < len(voice):
+        bgm += bgm
+        
+    # Trim the music to end exactly when the voiceover ends
+    bgm = bgm[:len(voice)]
+    
+    # Merge them together
+    final_audio = bgm.overlay(voice)
+    final_audio.export(output_file, format="mp3")
+    return output_file
+'''
 # --- 2. EXPRESSIVE VOICEOVER (ELEVENLABS) ---
 def generate_voiceover(text: str, filename="raw_voice.mp3"):
     """Generates hyper-expressive audio using ElevenLabs."""
@@ -83,25 +126,26 @@ def mix_audio(voice_file: str, bgm_file="bg_music.mp3", output_file="final_audio
     final_audio = bgm.overlay(voice)
     final_audio.export(output_file, format="mp3")
     return output_file
-
-# --- 4. IMAGE GENERATION (HUGGING FACE) ---
+'''
+# --- 4. IMAGE GENERATION (HUGGING FACE HUB) ---
 def generate_image(prompt: str, filename="background_art.png"):
-    """Sends the extracted prompt to Hugging Face Inference API."""
-    API_URL = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-xl-base-1.0"
-    headers = {"Authorization": f"Bearer {os.getenv('HUGGINGFACE_API_KEY')}"}
+    """Generates the image using the official Hugging Face Python SDK."""
+    # Initialize the client with your token
+    hf_client = InferenceClient(api_key=os.getenv('HUGGINGFACE_API_KEY'))
     
     enhanced_prompt = f"3D animation style, bright vibrant colors, cute, Cocomelon style, Pixar style, {prompt}"
     
-    payload = {"inputs": enhanced_prompt}
-    response = requests.post(API_URL, headers=headers, json=payload)
-    
-    if response.status_code == 200:
-        image = Image.open(io.BytesIO(response.content))
+    try:
+        # Using FLUX.1-schnell: Currently the fastest and most widely supported free model
+        image = hf_client.text_to_image(
+            prompt=enhanced_prompt,
+            model="black-forest-labs/FLUX.1-schnell" 
+        )
         image.save(filename)
         return filename
-    else:
-        raise Exception(f"Image API failed: {response.text}")
-
+    except Exception as e:
+        raise Exception(f"Image API failed: {str(e)}")
+    
 # --- STREAMLIT UI ---
 st.title("🐢 Kids Rhyme Video Engine")
 st.subheader("Automated Asset Generation Dashboard")
