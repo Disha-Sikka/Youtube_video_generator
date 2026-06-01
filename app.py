@@ -11,6 +11,7 @@ from PIL import Image
 from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 from huggingface_hub import InferenceClient
+from moviepy import ImageClip, AudioFileClip
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
@@ -145,12 +146,33 @@ def generate_image(prompt: str, filename="background_art.png"):
         return filename
     except Exception as e:
         raise Exception(f"Image API failed: {str(e)}")
+
+# --- 5. NEW: VIDEO RENDERING (MOVIEPY) ---
+def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"):
+    """Combines the static image and mixed audio into a final MP4 video file."""
+    # Load the audio to get its exact duration
+    audio_clip = AudioFileClip(audio_file)
     
+    # Create an image clip that lasts exactly as long as the audio
+    video_clip = ImageClip(image_file).with_duration(audio_clip.duration)
+    
+    # Set the audio of the video clip
+    video_clip = video_clip.with_audio(audio_clip)
+    
+    # Write the result to a file (using 24fps for standard video)
+    video_clip.write_videofile(output_file, fps=24, codec="libx264", audio_codec="aac")
+    
+    # Close clips to free up system memory
+    audio_clip.close()
+    video_clip.close()
+    
+    return output_file
+
 # --- STREAMLIT UI ---
 st.title("🐢 Kids Rhyme Video Engine")
-st.subheader("Automated Asset Generation Dashboard")
+st.subheader("Automated Video Generation Dashboard")
 
-topic_input = st.text_input("Enter a topic for the rhyme (e.g., 'Picking up litter makes the earth smile'):")
+topic_input = st.text_input("Enter a topic for the rhyme:")
 
 if "generated_text" not in st.session_state:
     st.session_state.generated_text = None
@@ -167,14 +189,14 @@ if st.button("Generate Script & Prompts"):
 
 if st.session_state.generated_text:
     st.markdown("### 📋 Generated Output")
-    st.text_area("Raw AI Output", st.session_state.generated_text, height=200)
+    st.text_area("Raw AI Output", st.session_state.generated_text, height=150)
     
     full_text = st.session_state.generated_text
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🚀 Generate Final Assets", type="primary"):
-            with st.spinner("Building audio and visuals..."):
+        if st.button("🚀 Render Final Video", type="primary"):
+            with st.spinner("Executing full pipeline (this takes a minute)..."):
                 try:
                     # 1. Parse text
                     parts = full_text.split("IMAGE_PROMPT:")
@@ -184,15 +206,20 @@ if st.session_state.generated_text:
                     # 2. Generate Voiceover
                     raw_voice = generate_voiceover(rhyme_only)
                     
-                    # 3. Mix with Background Music
+                    # 3. Mix Audio
                     final_audio_path = mix_audio(raw_voice, "bg_music.mp3", "final_audio.mp3")
-                    st.success("Audio Pipeline Complete! 🎧")
-                    st.audio(final_audio_path, format="audio/mp3")
+                    st.write("🎵 Audio mixed successfully...")
                     
                     # 4. Generate Image
                     image_file = generate_image(image_prompt)
-                    st.success("Visual Pipeline Complete! 🎨")
-                    st.image(image_file, caption="Generated 3D Background")
+                    st.write("🎨 Background art generated...")
+                    
+                    # 5. Render Video
+                    final_video_path = create_video(image_file, final_audio_path, "final_video.mp4")
+                    st.success("🎬 Video Render Complete!")
+                    
+                    # Display the final video player
+                    st.video(final_video_path)
                     
                 except Exception as e:
                     st.error(f"Pipeline failed: {e}")
