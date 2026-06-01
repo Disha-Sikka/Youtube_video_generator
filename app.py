@@ -11,7 +11,7 @@ from PIL import Image
 from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 from huggingface_hub import InferenceClient
-from moviepy import ImageClip, AudioFileClip
+from moviepy import VideoFileClip,concatenate_videoclips,AudioFileClip, ImageClip
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
@@ -146,25 +146,86 @@ def generate_image(prompt: str, filename="background_art.png"):
         return filename
     except Exception as e:
         raise Exception(f"Image API failed: {str(e)}")
-
-# --- 5. NEW: VIDEO RENDERING (MOVIEPY) ---
+    
+# --- 5. CINEMATIC VIDEO RENDERING (FREE LOCAL MOTION) ---
 def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"):
-    """Combines the static image and mixed audio into a final MP4 video file."""
-    # Load the audio to get its exact duration
+    """Creates a dynamic video by applying a smooth, local zoom animation to a static image."""
     audio_clip = AudioFileClip(audio_file)
+    duration = audio_clip.duration
     
-    # Create an image clip that lasts exactly as long as the audio
-    video_clip = ImageClip(image_file).with_duration(audio_clip.duration)
+    # Load the static image clip
+    clip = ImageClip(image_file).with_duration(duration)
     
-    # Set the audio of the video clip
+    # Define a smooth zoom-in function (zooms from 1.0x to 1.15x magnification over time)
+    # This creates the illusion of organic 3D camera movement completely locally
+    def zoom_effect(get_frame, t):
+        fraction = t / duration
+        scale = 1.0 + (0.15 * fraction)  # Adjust 0.15 to change how fast it zooms
+        
+        # Get current frame as a PIL Image to resize it safely
+        img = Image.fromarray(get_frame(t))
+        base_size = img.size
+        
+        # Calculate new dimensions based on scale factor
+        new_size = (int(base_size[0] * scale), int(base_size[1] * scale))
+        img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
+        
+        # Crop back down to original dimensions from the center to maintain layout
+        left = (img_resized.size[0] - base_size[0]) / 2
+        top = (img_resized.size[1] - base_size[1]) / 2
+        right = left + base_size[0]
+        bottom = top + base_size[1]
+        
+        cropped_img = img_resized.crop((left, top, right, bottom))
+        import numpy as np
+        return np.array(cropped_img)
+
+    # Apply the cinematic transform effect to the clip
+    animated_clip = clip.transform(zoom_effect)
+    
+    # Attach the final mixed audio track
+    final_video = animated_clip.with_audio(audio_clip)
+    
+    # Render final high-quality file
+    final_video.write_videofile(
+        output_file, 
+        fps=24, 
+        codec="libx264", 
+        audio_codec="aac",
+        logger=None # Keeps the console output clean
+    )
+    
+    # Free up memory resources
+    audio_clip.close()
+    clip.close()
+    final_video.close()
+    
+    return output_file
+
+# --- 6. VIDEO RENDERING (MOVIEPY 2.0+) ---
+def create_video(video_file: str, audio_file: str, output_file="final_video.mp4"):
+    """Combines the animated video and mixed audio, looping the video to match audio length."""
+    audio_clip = AudioFileClip(audio_file)
+    base_video_clip = VideoFileClip(video_file)
+    
+    # Calculate how many times we need to loop the 3-second video to fit the audio
+    repeats = int(audio_clip.duration / base_video_clip.duration) + 1
+    
+    # Duplicate the video clip seamlessly
+    video_clip = concatenate_videoclips([base_video_clip] * repeats)
+    
+    # Trim the looped video to end exactly when the audio ends
+    video_clip = video_clip.with_duration(audio_clip.duration)
+    
+    # Add the audio track
     video_clip = video_clip.with_audio(audio_clip)
     
-    # Write the result to a file (using 24fps for standard video)
+    # Render final file
     video_clip.write_videofile(output_file, fps=24, codec="libx264", audio_codec="aac")
     
-    # Close clips to free up system memory
     audio_clip.close()
     video_clip.close()
+    base_video_clip.close()
     
     return output_file
 
@@ -214,7 +275,12 @@ if st.session_state.generated_text:
                     image_file = generate_image(image_prompt)
                     st.write("🎨 Background art generated...")
                     
-                    # 5. Render Video
+                    # 4. Generate Image
+                    image_file = generate_image(image_prompt)
+                    st.write("🎨 High-quality background art generated...")
+                    
+                    # 5. Render Video with Cinematic Motion (No API required!)
+                    st.write("✨ Applying smooth 3D camera motion...")
                     final_video_path = create_video(image_file, final_audio_path, "final_video.mp4")
                     st.success("🎬 Video Render Complete!")
                     
