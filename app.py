@@ -149,42 +149,45 @@ def generate_image(prompt: str, filename="background_art.png"):
     
 # --- 5. CINEMATIC VIDEO RENDERING (FREE LOCAL MOTION) ---
 def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"):
-    """Creates a dynamic video by applying a smooth, local zoom animation to a static image."""
+    """Creates a dynamic video entirely from scratch to bypass ImageClip pipe bugs."""
+    import numpy as np
+    from PIL import Image
+    from moviepy import VideoClip, AudioFileClip
+    
     audio_clip = AudioFileClip(audio_file)
     duration = audio_clip.duration
     
-    # Load the static image clip
-    clip = ImageClip(image_file).with_duration(duration)
+    # CRITICAL FIX 1: Open the image and strictly force it to RGB (removes hidden alpha channels)
+    base_img = Image.open(image_file).convert("RGB")
+    base_w, base_h = base_img.size
     
-    # Define a smooth zoom-in function (zooms from 1.0x to 1.15x magnification over time)
-    # This creates the illusion of organic 3D camera movement completely locally
-    def zoom_effect(get_frame, t):
+    # We build the video frame-by-frame from scratch
+    def make_frame(t):
         fraction = t / duration
-        scale = 1.0 + (0.15 * fraction)  # Adjust 0.15 to change how fast it zooms
+        scale = 1.0 + (0.45 * fraction)  # Smooth 15% zoom over the video duration
         
-        # Get current frame as a PIL Image to resize it safely
-        img = Image.fromarray(get_frame(t))
-        base_size = img.size
+        new_w = int(base_w * scale)
+        new_h = int(base_h * scale)
         
-        # Calculate new dimensions based on scale factor
-        new_size = (int(base_size[0] * scale), int(base_size[1] * scale))
-        img_resized = img.resize(new_size, Image.Resampling.LANCZOS)
+        # Resize
+        img_resized = base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
-        # Crop back down to original dimensions from the center to maintain layout
-        left = (img_resized.size[0] - base_size[0]) / 2
-        top = (img_resized.size[1] - base_size[1]) / 2
-        right = left + base_size[0]
-        bottom = top + base_size[1]
+        # Crop back to original dimensions from the center
+        left = int((new_w - base_w) / 2)
+        top = int((new_h - base_h) / 2)
+        right = left + base_w
+        bottom = top + base_h
         
         cropped_img = img_resized.crop((left, top, right, bottom))
-        import numpy as np
-        return np.array(cropped_img)
+        
+        # CRITICAL FIX 2: Explicitly cast to uint8 so ffmpeg doesn't crash on the byte format
+        return np.array(cropped_img, dtype=np.uint8)
 
-    # Apply the cinematic transform effect to the clip
-    animated_clip = clip.transform(zoom_effect)
+    # Bypass ImageClip entirely and generate the video directly from our frame math
+    video_clip = VideoClip(make_frame, duration=duration)
     
-    # Attach the final mixed audio track
-    final_video = animated_clip.with_audio(audio_clip)
+    # Add the audio track
+    final_video = video_clip.with_audio(audio_clip)
     
     # Render final high-quality file
     final_video.write_videofile(
@@ -192,42 +195,18 @@ def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"
         fps=24, 
         codec="libx264", 
         audio_codec="aac",
-        logger=None # Keeps the console output clean
+        logger=None
     )
     
-    # Free up memory resources
+    # Clean up system memory
     audio_clip.close()
-    clip.close()
+    video_clip.close()
     final_video.close()
+    base_img.close()
     
     return output_file
 
-# --- 6. VIDEO RENDERING (MOVIEPY 2.0+) ---
-def create_video(video_file: str, audio_file: str, output_file="final_video.mp4"):
-    """Combines the animated video and mixed audio, looping the video to match audio length."""
-    audio_clip = AudioFileClip(audio_file)
-    base_video_clip = VideoFileClip(video_file)
-    
-    # Calculate how many times we need to loop the 3-second video to fit the audio
-    repeats = int(audio_clip.duration / base_video_clip.duration) + 1
-    
-    # Duplicate the video clip seamlessly
-    video_clip = concatenate_videoclips([base_video_clip] * repeats)
-    
-    # Trim the looped video to end exactly when the audio ends
-    video_clip = video_clip.with_duration(audio_clip.duration)
-    
-    # Add the audio track
-    video_clip = video_clip.with_audio(audio_clip)
-    
-    # Render final file
-    video_clip.write_videofile(output_file, fps=24, codec="libx264", audio_codec="aac")
-    
-    audio_clip.close()
-    video_clip.close()
-    base_video_clip.close()
-    
-    return output_file
+
 
 # --- STREAMLIT UI ---
 st.title("🐢 Kids Rhyme Video Engine")
@@ -270,10 +249,6 @@ if st.session_state.generated_text:
                     # 3. Mix Audio
                     final_audio_path = mix_audio(raw_voice, "bg_music.mp3", "final_audio.mp3")
                     st.write("🎵 Audio mixed successfully...")
-                    
-                    # 4. Generate Image
-                    image_file = generate_image(image_prompt)
-                    st.write("🎨 Background art generated...")
                     
                     # 4. Generate Image
                     image_file = generate_image(image_prompt)
