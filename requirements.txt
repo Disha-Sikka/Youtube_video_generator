@@ -1,10 +1,9 @@
 streamlit
-moviepy
-edge-tts
-google-genai
-openai
 requests
-pillow
+edge-tts
 python-dotenv
+google-genai
+pillow
 pydub
-huggingface_hub
+huggingface-hub
+moviepy
