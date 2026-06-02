@@ -8,7 +8,7 @@ import streamlit as st
 from dotenv import load_dotenv
 from google import genai
 from PIL import Image
-from elevenlabs.client import ElevenLabs
+# from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 from huggingface_hub import InferenceClient
 from moviepy import VideoFileClip,concatenate_videoclips,AudioFileClip, ImageClip
