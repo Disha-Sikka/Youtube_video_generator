@@ -7,4 +7,4 @@ pillow
 pydub
 audioop-lts
 huggingface-hub
-moviepy
+moviepy>=2.0.0
