@@ -16,7 +16,7 @@ from moviepy import VideoFileClip,concatenate_videoclips,AudioFileClip, ImageCli
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
 client = genai.Client()
-eleven_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
+#eleven_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
 
 # --- 1. SCRIPT GENERATION (GEMINI) ---
 def generate_rhyme_and_prompts(topic: str):
