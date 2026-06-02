@@ -5,6 +5,6 @@ python-dotenv
 google-genai
 pillow
 pydub
-pyaudioop
+audioop-lts
 huggingface-hub
 moviepy
