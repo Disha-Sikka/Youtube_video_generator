@@ -18,11 +18,12 @@ import googleapiclient.errors
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
-from elevenlabs import eleven_client
+from elevenlabs.client import elevenlabs
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
 client = genai.Client()
+eleven_client = elevenlabs.Client(api_key=os.getenv('ELEVENLABS_API_KEY'))
 
 # --- 1. MULTI-SCENE SCRIPT GENERATION (1-MINUTE RUNTIME OPTIMIZED) ---
 def generate_rhyme_and_prompts(topic: str):
