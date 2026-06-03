@@ -2,8 +2,6 @@ import os
 import io
 import math
 import requests
-import asyncio
-import edge_tts
 import json
 import numpy as np
 import streamlit as st
@@ -18,12 +16,14 @@ import googleapiclient.errors
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
-from elevenlabs.client import elevenlabs
+from elevenlabs.client import ElevenLabs
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
 client = genai.Client()
-eleven_client = elevenlabs.Client(api_key=os.getenv('ELEVENLABS_API_KEY'))
+
+# FIX: Corrected capitalization to match the imported class from line 19
+eleven_client = ElevenLabs(api_key=os.getenv('ELEVENLABS_API_KEY'))
 
 # --- 1. MULTI-SCENE SCRIPT GENERATION (1-MINUTE RUNTIME OPTIMIZED) ---
 def generate_rhyme_and_prompts(topic: str):
@@ -57,15 +57,9 @@ def generate_rhyme_and_prompts(topic: str):
     )
     return response.text
 
-async def async_generate_audio(text: str, filename: str, voice: str):
-    """The asynchronous core function for Microsoft Edge TTS."""
-    communicate = edge_tts.Communicate(text, voice)
-    await communicate.save(filename)
-
 # --- 2. EXPRESSIVE VOICEOVER (ELEVENLABS) ---
 def generate_voiceover(text: str, filename="raw_voice.mp3"):
     """Generates hyper-expressive audio using ElevenLabs."""
-    # Using a default friendly voice ID (Rachel) - you can swap this with a kid's voice ID from your dashboard
     audio_generator = eleven_client.text_to_speech.convert(
         text=text,
         voice_id="HVHOSc49fGYttVjeiWb2",
