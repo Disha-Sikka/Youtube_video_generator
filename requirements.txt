@@ -3,6 +3,9 @@ requests
 edge-tts
 python-dotenv
 google-genai
+google-auth
+google-auth-oauthlib
+google-api-python-client
 pillow
 pydub
 audioop-lts
