@@ -8,22 +8,19 @@ import streamlit as st
 from dotenv import load_dotenv
 from google import genai
 from PIL import Image
-# from elevenlabs.client import ElevenLabs
 from pydub import AudioSegment
 from huggingface_hub import InferenceClient
-from moviepy import VideoFileClip,concatenate_videoclips,AudioFileClip, ImageClip
+from moviepy import VideoFileClip, concatenate_videoclips, AudioFileClip, ImageClip
 import google_auth_oauthlib.flow
 import googleapiclient.discovery
 import googleapiclient.errors
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
-from google_auth_oauthlib.flow import InstalledAppFlow
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
 client = genai.Client()
-#eleven_client = ElevenLabs(api_key=os.getenv("ELEVENLABS_API_KEY"))
 
 # --- 1. SCRIPT GENERATION (GEMINI) ---
 def generate_rhyme_and_prompts(topic: str):
@@ -58,17 +55,13 @@ async def async_generate_audio(text: str, filename: str, voice: str):
 
 def generate_voiceover(text: str, filename="raw_voice.mp3"):
     """Generates voiceover using Edge TTS completely for free."""
-    # "en-US-AriaNeural" is bright, clear, and excellent for storytelling
     voice = "en-US-AriaNeural" 
-    
     asyncio.run(async_generate_audio(text, filename, voice))
     return filename
 
 # --- 3. AUDIO MIXING (PYDUB) ---
 def mix_audio(voice_file: str, bgm_file="bg_music.mp3", output_file="final_audio.mp3"):
     """Overlays the voiceover onto a looping background music track."""
-    from pydub import AudioSegment
-    
     if not os.path.exists(bgm_file):
         st.warning(f"Background music '{bgm_file}' not found. Skipping mixing.")
         return voice_file
@@ -91,16 +84,15 @@ def mix_audio(voice_file: str, bgm_file="bg_music.mp3", output_file="final_audio
     final_audio.export(output_file, format="mp3")
     return output_file
 
-# --- 4. IMAGE GENERATION (HUGGING FACE HUB) ---
+# --- 4. IMAGE GENERATION (WIDESCREEN 16:9 RECONSTRUCTED) ---
 def generate_image(prompt: str, filename="background_art.png"):
-    """Generates the image using the official Hugging Face Python SDK."""
-    # Initialize the client with your token
+    """Generates a landscape image using the official Hugging Face Python SDK."""
     hf_client = InferenceClient(api_key=os.getenv('HUGGINGFACE_API_KEY'))
     
-    enhanced_prompt = f"3D animation style, bright vibrant colors, cute, Cocomelon style, Pixar style, {prompt}"
+    # Force landscape styling inside the prompt pipeline to block automatic Shorts conversion
+    enhanced_prompt = f"Widescreen cinematic 16:9 aspect ratio, landscape view, 3D animation style, bright vibrant colors, cute, Cocomelon style, Pixar style, {prompt}"
     
     try:
-        # Using FLUX.1-schnell: Currently the fastest and most widely supported free model
         image = hf_client.text_to_image(
             prompt=enhanced_prompt,
             model="black-forest-labs/FLUX.1-schnell" 
@@ -110,9 +102,9 @@ def generate_image(prompt: str, filename="background_art.png"):
     except Exception as e:
         raise Exception(f"Image API failed: {str(e)}")
     
-# --- 5. CINEMATIC VIDEO RENDERING (FREE LOCAL MOTION) ---
+# --- 5. CINEMATIC VIDEO RENDERING ---
 def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"):
-    """Creates a dynamic video entirely from scratch to bypass ImageClip pipe bugs."""
+    """Creates a dynamic video from scratch to bypass ImageClip bugs."""
     import numpy as np
     from PIL import Image
     from moviepy import VideoClip, AudioFileClip
@@ -120,39 +112,29 @@ def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"
     audio_clip = AudioFileClip(audio_file)
     duration = audio_clip.duration
     
-    # CRITICAL FIX 1: Open the image and strictly force it to RGB (removes hidden alpha channels)
     base_img = Image.open(image_file).convert("RGB")
     base_w, base_h = base_img.size
     
-    # We build the video frame-by-frame from scratch
     def make_frame(t):
         fraction = t / duration
-        scale = 1.0 + (0.45 * fraction)  # Smooth 15% zoom over the video duration
+        scale = 1.0 + (0.15 * fraction)  # Smooth 15% zoom over the video duration
         
         new_w = int(base_w * scale)
         new_h = int(base_h * scale)
         
-        # Resize
         img_resized = base_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
-        # Crop back to original dimensions from the center
         left = int((new_w - base_w) / 2)
         top = int((new_h - base_h) / 2)
         right = left + base_w
         bottom = top + base_h
         
         cropped_img = img_resized.crop((left, top, right, bottom))
-        
-        # CRITICAL FIX 2: Explicitly cast to uint8 so ffmpeg doesn't crash on the byte format
         return np.array(cropped_img, dtype=np.uint8)
 
-    # Bypass ImageClip entirely and generate the video directly from our frame math
     video_clip = VideoClip(make_frame, duration=duration)
-    
-    # Add the audio track
     final_video = video_clip.with_audio(audio_clip)
     
-    # Render final high-quality file
     final_video.write_videofile(
         output_file, 
         fps=24, 
@@ -161,7 +143,6 @@ def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"
         logger=None
     )
     
-    # Clean up system memory
     audio_clip.close()
     video_clip.close()
     final_video.close()
@@ -169,53 +150,46 @@ def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"
     
     return output_file
 
-# --- 7. YOUTUBE UPLOAD AUTOMATION ---
+# --- 7. YOUTUBE UPLOAD AUTOMATION (CLOUD SAFE) ---
 def upload_to_youtube(video_file: str, title: str, description: str):
-    """Authenticates with your Google account using Streamlit Secrets and uploads the video."""
+    """Authenticates using background tokens without desktop browser dependencies."""
     scopes = ["https://www.googleapis.com/auth/youtube.upload"]
     creds = None
     
-    # 1. Direct Memory Load: Read Token from Streamlit Secrets (Replaces token.json file)
-    if "TOKEN_JSON" in st.secrets:
-        try:
-            token_info = json.loads(st.secrets["TOKEN_JSON"])
-            creds = Credentials.from_authorized_user_info(token_info, scopes)
-        except Exception as e:
-            st.warning(f"Could not parse TOKEN_JSON secret: {e}")
+    # 1. Inspect environment secrets
+    if "TOKEN_JSON" not in st.secrets:
+        raise Exception("Authentication layout failure: TOKEN_JSON key not found in Streamlit Secrets.")
         
-    # 2. If the token is expired, refresh it automatically in the background
+    # 2. Parse token string out of memory
+    try:
+        token_info = json.loads(st.secrets["TOKEN_JSON"])
+        creds = Credentials.from_authorized_user_info(token_info, scopes)
+    except Exception as e:
+        raise Exception(f"Failed to compile authorization profile: {e}")
+        
+    # 3. Handle token refreshing silently in background
     if creds and creds.expired and creds.refresh_token:
         try:
+            st.info("🔄 Renewing API session tokens dynamically...")
             creds.refresh(Request())
         except Exception as e:
-            st.warning(f"Could not refresh access token: {e}")
-            creds = None
+            raise Exception(f"OAuth core rejection during key renewal: {e}")
 
-    # 3. FIX 2: Direct Dictionary Fallback (Replaces client_secrets.json file check)
     if not creds or not creds.valid:
-        if "CLIENT_SECRETS_JSON" in st.secrets:
-            try:
-                client_secrets_dict = json.loads(st.secrets["CLIENT_SECRETS_JSON"])
-                # Initialize using the client configuration dictionary directly
-                flow = InstalledAppFlow.from_client_config(client_secrets_dict, scopes=scopes)
-                creds = flow.run_local_server(port=0)
-            except Exception as e:
-                raise Exception(f"Authentication setup failed: {e}. Ensure TOKEN_JSON contains a valid refresh token.")
-        else:
-            raise Exception("Authentication files not found. Ensure CLIENT_SECRETS_JSON is defined in Streamlit Cloud Secrets.")
+        raise Exception("Google verification validation failure. Please re-run your local token script.")
 
-    # 4. Build the YouTube API client
+    # 4. Initialize client architecture
     youtube = googleapiclient.discovery.build("youtube", "v3", credentials=creds)
 
-    # 5. Define Video Metadata
+    # 5. Insert video parameters (Standard Long-Form Setup)
     request = youtube.videos().insert(
         part="snippet,status",
         body={
           "snippet": {
             "title": title,
-            "description": description + "\n\n#shorts #children #nurseryrhyme #kids",
-            "tags": ["kids", "nursery rhyme", "education", "animation", "shorts"],
-            "categoryId": "22" # Category 22 is "People & Blogs"
+            "description": description + "\n\n#children #nurseryrhyme #kids #education #animation",
+            "tags": ["kids", "nursery rhyme", "education", "animation", "video", "stories"],
+            "categoryId": "22" 
           },
           "status": {
             "privacyStatus": "public" 
@@ -224,7 +198,6 @@ def upload_to_youtube(video_file: str, title: str, description: str):
         media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)
     )
     
-    # 6. Execute the Upload
     response = request.execute()
     return response['id']
 
@@ -259,31 +232,22 @@ if st.session_state.generated_text:
         if st.button("🚀 Render Final Video", type="primary"):
             with st.spinner("Executing full pipeline (this takes a minute)..."):
                 try:
-                    # 1. Parse text
                     parts = full_text.split("IMAGE_PROMPT:")
                     rhyme_only = parts[0].replace("RHYME:", "").strip()
                     image_prompt = parts[1].strip() if len(parts) > 1 else "Cute colorful kids scene"
                     
-                    # 2. Generate Voiceover
                     raw_voice = generate_voiceover(rhyme_only)
-                    
-                    # 3. Mix Audio
                     final_audio_path = mix_audio(raw_voice, "bg_music.mp3", "final_audio.mp3")
                     st.write("🎵 Audio mixed successfully...")
                     
-                    # 4. Generate Image
                     image_file = generate_image(image_prompt)
-                    st.write("🎨 High-quality background art generated...")
+                    st.write("🎨 Widescreen context graphics generated...")
                     
-                    # 5. Render Video with Cinematic Motion
-                    st.write("✨ Applying smooth 3D camera motion...")
+                    st.write("✨ Synchronizing production media layers...")
                     final_video_path = create_video(image_file, final_audio_path, "final_video.mp4")
                     st.success("🎬 Video Render Complete!")
                     
-                    # Display the final video player
                     st.video(final_video_path)
-                    
-                    # Store the path in session state so we can access it outside this button click
                     st.session_state.final_video = final_video_path
                     
                 except Exception as e:
@@ -296,7 +260,7 @@ if st.session_state.generated_text:
                 del st.session_state.final_video
             st.rerun()
 
-# NEW UPLOAD SECTION
+# PUBLIC VIDEO UPLOAD MANAGEMENT PANEL
 if "final_video" in st.session_state:
     st.markdown("---")
     st.markdown("### 🚀 Step 3: Publish to YouTube")
@@ -304,11 +268,14 @@ if "final_video" in st.session_state:
     video_title = st.text_input("YouTube Video Title:", value=f"{topic_input} - Kids Nursery Rhyme")
     video_desc = st.text_area("YouTube Description:", value="A fun and educational song for kids!")
     
-    if st.button("📤 Upload to YouTube Shorts", type="primary"):
-        with st.spinner("Uploading to YouTube... Check your browser if it asks you to log in!"):
+    if st.button("📤 Publish Video to YouTube", type="primary"):
+        with st.spinner("Uploading file blocks directly to your media feed..."):
             try:
                 video_id = upload_to_youtube(st.session_state.final_video, video_title, video_desc)
                 st.success(f"✅ Upload Complete! Video ID: {video_id}")
-                st.markdown(f"**[Click here to view your video on YouTube Studio](https://studio.youtube.com/video/{video_id}/edit)**")
+                
+                # Public watch configurations
+                st.markdown(f"🍿 **[Click here to watch your live YouTube Video](https://www.youtube.com/watch?v={video_id})**")
+                st.info(f"🔗 Direct shareable video link: `https://youtu.be/{video_id}`")
             except Exception as e:
                 st.error(f"Upload failed: {e}")
