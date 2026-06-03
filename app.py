@@ -12,6 +12,12 @@ from PIL import Image
 from pydub import AudioSegment
 from huggingface_hub import InferenceClient
 from moviepy import VideoFileClip,concatenate_videoclips,AudioFileClip, ImageClip
+import google_auth_oauthlib.flow
+import googleapiclient.discovery
+import googleapiclient.errors
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from googleapiclient.http import MediaFileUpload
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
@@ -161,6 +167,56 @@ def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"
     
     return output_file
 
+# --- 7. YOUTUBE UPLOAD AUTOMATION ---
+def upload_to_youtube(video_file: str, title: str, description: str):
+    """Authenticates with your Google account and uploads the video to YouTube Shorts."""
+    scopes = ["https://www.googleapis.com/auth/youtube.upload"]
+    
+    # CRITICAL FIX: Force Python to look in the exact directory where app.py lives
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    client_secrets_path = os.path.join(BASE_DIR, 'client_secrets.json')
+    token_path = os.path.join(BASE_DIR, 'token.json')
+    
+    # 1. Handle Google Authentication
+    creds = None
+    if os.path.exists(token_path):
+        creds = Credentials.from_authorized_user_file(token_path, scopes)
+        
+    # If there are no (valid) credentials available, let the user log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(
+                client_secrets_path, scopes)
+            creds = flow.run_local_server(port=0)
+        # Save the credentials for the next run
+        with open(token_path, 'w') as token:
+            token.write(creds.to_json())
+
+    # 2. Build the YouTube API client
+    youtube = googleapiclient.discovery.build("youtube", "v3", credentials=creds)
+
+    # 3. Define Video Metadata
+    request = youtube.videos().insert(
+        part="snippet,status",
+        body={
+          "snippet": {
+            "title": title,
+            "description": description + "\n\n#shorts #children #nurseryrhyme #kids",
+            "tags": ["kids", "nursery rhyme", "education", "animation", "shorts"],
+            "categoryId": "22" # Category 22 is "People & Blogs"
+          },
+          "status": {
+            "privacyStatus": "public" # CRITICAL: Keep this 'private' while testing!
+          }
+        },
+        media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)
+    )
+    
+    # 4. Execute the Upload
+    response = request.execute()
+    return response['id']
 
 
 # --- STREAMLIT UI ---
@@ -209,7 +265,7 @@ if st.session_state.generated_text:
                     image_file = generate_image(image_prompt)
                     st.write("🎨 High-quality background art generated...")
                     
-                    # 5. Render Video with Cinematic Motion (No API required!)
+                    # 5. Render Video with Cinematic Motion
                     st.write("✨ Applying smooth 3D camera motion...")
                     final_video_path = create_video(image_file, final_audio_path, "final_video.mp4")
                     st.success("🎬 Video Render Complete!")
@@ -217,10 +273,32 @@ if st.session_state.generated_text:
                     # Display the final video player
                     st.video(final_video_path)
                     
+                    # Store the path in session state so we can access it outside this button click
+                    st.session_state.final_video = final_video_path
+                    
                 except Exception as e:
                     st.error(f"Pipeline failed: {e}")
                 
     with col2:
         if st.button("❌ Reject / Regenerate"):
             st.session_state.generated_text = None
+            if "final_video" in st.session_state:
+                del st.session_state.final_video
             st.rerun()
+
+# NEW UPLOAD SECTION
+if "final_video" in st.session_state:
+    st.markdown("---")
+    st.markdown("### 🚀 Step 3: Publish to YouTube")
+    
+    video_title = st.text_input("YouTube Video Title:", value=f"{topic_input} - Kids Nursery Rhyme")
+    video_desc = st.text_area("YouTube Description:", value="A fun and educational song for kids!")
+    
+    if st.button("📤 Upload to YouTube Shorts", type="primary"):
+        with st.spinner("Uploading to YouTube... Check your browser if it asks you to log in!"):
+            try:
+                video_id = upload_to_youtube(st.session_state.final_video, video_title, video_desc)
+                st.success(f"✅ Upload Complete! Video ID: {video_id}")
+                st.markdown(f"**[Click here to view your video on YouTube Studio](https://studio.youtube.com/video/{video_id}/edit)**")
+            except Exception as e:
+                st.error(f"Upload failed: {e}")
