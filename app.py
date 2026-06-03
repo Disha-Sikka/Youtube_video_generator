@@ -2,6 +2,8 @@ import os
 import io
 import math
 import requests
+import asyncio
+import edge_tts
 import json
 import numpy as np
 import streamlit as st
@@ -16,14 +18,10 @@ import googleapiclient.errors
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
-from elevenlabs.client import ElevenLabs
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
 client = genai.Client()
-
-# FIX: Corrected capitalization to match the imported class from line 19
-eleven_client = ElevenLabs(api_key=os.getenv('ELEVENLABS_API_KEY'))
 
 # --- 1. MULTI-SCENE SCRIPT GENERATION (1-MINUTE RUNTIME OPTIMIZED) ---
 def generate_rhyme_and_prompts(topic: str):
@@ -57,22 +55,25 @@ def generate_rhyme_and_prompts(topic: str):
     )
     return response.text
 
-# --- 2. EXPRESSIVE VOICEOVER (ELEVENLABS) ---
+async def async_generate_audio(text: str, filename: str, voice: str):
+    """The asynchronous core function for Microsoft Edge TTS."""
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(filename)
+
+# --- 2. EXPRESSIVE VOICEOVER ENGINE (EDGE-TTS AUTOMATED DIALECT ROUTING) ---
 def generate_voiceover(text: str, filename="raw_voice.mp3"):
-    """Generates hyper-expressive audio using ElevenLabs."""
-    audio_generator = eleven_client.text_to_speech.convert(
-        text=text,
-        voice_id="HVHOSc49fGYttVjeiWb2",
-        model_id="eleven_multilingual_v2",
-        output_format="mp3_44100_128"
-    )
+    """Generates voiceover using Edge TTS, automatically choosing the correct language engine."""
+    # Check if any character falls into the Devanagari Unicode block (Hindi alphabet)
+    is_hindi = any('\u0900' <= char <= '\u097F' for char in text)
     
-    with open(filename, "wb") as f:
-        if hasattr(audio_generator, '__iter__') and not isinstance(audio_generator, bytes):
-             for chunk in audio_generator:
-                 f.write(chunk)
-        else:
-             f.write(audio_generator)
+    if is_hindi:
+        # High-quality bright, native Indian voice optimized for children's cadence
+        voice = "hi-IN-SwaraNeural" 
+    else:
+        # Standard clear English narration voice
+        voice = "en-US-AriaNeural" 
+    
+    asyncio.run(async_generate_audio(text, filename, voice))
     return filename
 
 # --- 3. AUDIO MIXING (PYDUB) ---
@@ -85,17 +86,13 @@ def mix_audio(voice_file: str, bgm_file="bg_music.mp3", output_file="final_audio
     voice = AudioSegment.from_mp3(voice_file)
     bgm = AudioSegment.from_mp3(bgm_file)
     
-    # Lower the background music volume by 15 decibels so the voice is clear
     bgm = bgm - 15
     
-    # Loop the background music until it's as long as the voiceover
     while len(bgm) < len(voice):
         bgm += bgm
         
-    # Trim the music to end exactly when the voiceover ends
     bgm = bgm[:len(voice)]
     
-    # Merge them together
     final_audio = bgm.overlay(voice)
     final_audio.export(output_file, format="mp3")
     return output_file
@@ -124,7 +121,7 @@ def create_scene_video(image_file: str, duration: float, output_file: str):
     
     def make_frame(t):
         fraction = t / duration if duration > 0 else 0
-        scale = 1.0 + (0.12 * fraction)  # Smooth continuous 12% zoom effect per scene
+        scale = 1.0 + (0.12 * fraction)  
         
         new_w = int(base_w * scale)
         new_h = int(base_h * scale)
@@ -160,22 +157,18 @@ def compile_full_storyboard_video(scene_data, bgm_file="bg_music.mp3", output_fi
     for i, scene in enumerate(scene_data):
         st.write(f"🎬 Compiling Scene Layout {i+1}/{len(scene_data)}...")
         
-        # 1. Generate local voice snippet for this scene
         v_file = f"temp_voice_{i}.mp3"
         generate_voiceover(scene['lyrics'], filename=v_file)
         temp_files.append(v_file)
         
-        # Read duration boundaries using pydub
         seg = AudioSegment.from_mp3(v_file)
         duration = len(seg) / 1000.0
         combined_voice += seg  
         
-        # 2. Generate unique background artwork for this scene
         img_file = f"temp_img_{i}.png"
         generate_image(scene['image_prompt'], filename=img_file)
         temp_files.append(img_file)
         
-        # 3. Create independent zooming visual segment
         vid_file = f"temp_vid_{i}.mp4"
         create_scene_video(img_file, duration, vid_file)
         temp_files.append(vid_file)
@@ -187,13 +180,11 @@ def compile_full_storyboard_video(scene_data, bgm_file="bg_music.mp3", output_fi
     combined_voice.export(raw_voice_path, format="mp3")
     temp_files.append(raw_voice_path)
     
-    # Mix global voice track with background melody
     final_audio_path = mix_audio(raw_voice_path, bgm_file, "final_audio.mp3")
     
     st.write("🎞️ Stitching distinct scenes into visual timeline...")
     final_visual_timeline = concatenate_videoclips(video_clips, method="compose")
     
-    # Bind full audio track back to visual timeline mesh
     audio_track = AudioFileClip(final_audio_path)
     final_video = final_visual_timeline.with_audio(audio_track)
     
@@ -206,7 +197,6 @@ def compile_full_storyboard_video(scene_data, bgm_file="bg_music.mp3", output_fi
         logger=None
     )
     
-    # File cleanup closures
     audio_track.close()
     final_video.close()
     final_visual_timeline.close()

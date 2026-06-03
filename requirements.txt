@@ -1,14 +1,13 @@
 streamlit
 requests
+numpy
 edge-tts
 python-dotenv
 google-genai
 google-auth
-google-auth-oauthlib
 google-api-python-client
 pillow
 pydub
-elevenlabs
 audioop-lts
 huggingface-hub
 moviepy>=2.0.0
