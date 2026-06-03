@@ -1,9 +1,9 @@
-
 import os
 import io
 import requests
 import asyncio
 import edge_tts
+import json
 import streamlit as st
 from dotenv import load_dotenv
 from google import genai
@@ -18,6 +18,7 @@ import googleapiclient.errors
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.http import MediaFileUpload
+from google_auth_oauthlib.flow import InstalledAppFlow
 
 # --- SETUP & AUTHENTICATION ---
 load_dotenv()
@@ -89,6 +90,7 @@ def mix_audio(voice_file: str, bgm_file="bg_music.mp3", output_file="final_audio
     final_audio = bgm.overlay(voice)
     final_audio.export(output_file, format="mp3")
     return output_file
+
 # --- 4. IMAGE GENERATION (HUGGING FACE HUB) ---
 def generate_image(prompt: str, filename="background_art.png"):
     """Generates the image using the official Hugging Face Python SDK."""
@@ -169,35 +171,43 @@ def create_video(image_file: str, audio_file: str, output_file="final_video.mp4"
 
 # --- 7. YOUTUBE UPLOAD AUTOMATION ---
 def upload_to_youtube(video_file: str, title: str, description: str):
-    """Authenticates with your Google account and uploads the video to YouTube Shorts."""
+    """Authenticates with your Google account using Streamlit Secrets and uploads the video."""
     scopes = ["https://www.googleapis.com/auth/youtube.upload"]
-    
-    # CRITICAL FIX: Force Python to look in the exact directory where app.py lives
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    client_secrets_path = os.path.join(BASE_DIR, 'client_secrets.json')
-    token_path = os.path.join(BASE_DIR, 'token.json')
-    
-    # 1. Handle Google Authentication
     creds = None
-    if os.path.exists(token_path):
-        creds = Credentials.from_authorized_user_file(token_path, scopes)
+    
+    # 1. Direct Memory Load: Read Token from Streamlit Secrets (Replaces token.json file)
+    if "TOKEN_JSON" in st.secrets:
+        try:
+            token_info = json.loads(st.secrets["TOKEN_JSON"])
+            creds = Credentials.from_authorized_user_info(token_info, scopes)
+        except Exception as e:
+            st.warning(f"Could not parse TOKEN_JSON secret: {e}")
         
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+    # 2. If the token is expired, refresh it automatically in the background
+    if creds and creds.expired and creds.refresh_token:
+        try:
             creds.refresh(Request())
-        else:
-            flow = google_auth_oauthlib.flow.InstalledAppFlow.from_client_secrets_file(
-                client_secrets_path, scopes)
-            creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
-        with open(token_path, 'w') as token:
-            token.write(creds.to_json())
+        except Exception as e:
+            st.warning(f"Could not refresh access token: {e}")
+            creds = None
 
-    # 2. Build the YouTube API client
+    # 3. FIX 2: Direct Dictionary Fallback (Replaces client_secrets.json file check)
+    if not creds or not creds.valid:
+        if "CLIENT_SECRETS_JSON" in st.secrets:
+            try:
+                client_secrets_dict = json.loads(st.secrets["CLIENT_SECRETS_JSON"])
+                # Initialize using the client configuration dictionary directly
+                flow = InstalledAppFlow.from_client_config(client_secrets_dict, scopes=scopes)
+                creds = flow.run_local_server(port=0)
+            except Exception as e:
+                raise Exception(f"Authentication setup failed: {e}. Ensure TOKEN_JSON contains a valid refresh token.")
+        else:
+            raise Exception("Authentication files not found. Ensure CLIENT_SECRETS_JSON is defined in Streamlit Cloud Secrets.")
+
+    # 4. Build the YouTube API client
     youtube = googleapiclient.discovery.build("youtube", "v3", credentials=creds)
 
-    # 3. Define Video Metadata
+    # 5. Define Video Metadata
     request = youtube.videos().insert(
         part="snippet,status",
         body={
@@ -208,13 +218,13 @@ def upload_to_youtube(video_file: str, title: str, description: str):
             "categoryId": "22" # Category 22 is "People & Blogs"
           },
           "status": {
-            "privacyStatus": "public" # CRITICAL: Keep this 'private' while testing!
+            "privacyStatus": "public" 
           }
         },
         media_body=MediaFileUpload(video_file, chunksize=-1, resumable=True)
     )
     
-    # 4. Execute the Upload
+    # 6. Execute the Upload
     response = request.execute()
     return response['id']
 
